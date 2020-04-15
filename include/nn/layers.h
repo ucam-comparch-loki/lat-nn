@@ -1,6 +1,10 @@
 // TODO: Pull the neural-network specific stuff out of lat-ifc and into here.
 // TODO: create a tensor type which generalises all of the `config_t`s and
 //       exposes more information (e.g. size of each dimension).
+
+#ifndef LAT_NN_LAYERS_H
+#define LAT_NN_LAYERS_H
+
 #include <lat/types.h>
 
 typedef struct {
@@ -82,3 +86,5 @@ activation_config_t* lat_avg_pool_2d_alloc(
   const activation_config_t* input,
   const pool_shape_t* params
 );
+
+#endif // include guard
