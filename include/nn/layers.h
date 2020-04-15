@@ -35,9 +35,9 @@ void lat_linear(
   const activation_config_t* input,
   const filter_config_t* weights,
   activation_config_t* output,
-  uint32_t batchSize,  // TODO: should be able to infer this
-  uint32_t numInputs,  // TODO: should be able to infer this
-  uint32_t numOutputs  // TODO: should be able to infer this
+  uint32_t batchSize,
+  uint32_t numInputs,
+  uint32_t numOutputs
 );
 
 // Downsample input by taking the maximum value in each window.
@@ -70,9 +70,9 @@ activation_config_t* lat_conv2d_alloc(
 activation_config_t* lat_linear_alloc(
   const activation_config_t* input,
   const filter_config_t* weights,
-  uint32_t batchSize,  // TODO: should be able to infer this
-  uint32_t numInputs,  // TODO: should be able to infer this
-  uint32_t numOutputs  // TODO: should be able to infer this
+  uint32_t batchSize,
+  uint32_t numInputs,
+  uint32_t numOutputs
 );
 
 // Downsample input by taking the maximum value in each window.
