@@ -3,6 +3,7 @@
 #include <lat/run.h>
 #include <loki/alloc.h>
 #include <loki/channels.h>
+#include <loki/channel_io.h>
 #include <loki/ids.h>
 #include "nn/layers.h"
 
@@ -183,8 +184,9 @@ activation_config_t* init_activation_tensor(uint batch, uint channels,
   activation_config_t* tensor = loki_malloc(sizeof(activation_config_t));
   assert(tensor != NULL);
 
-  tensor->address = loki_malloc(batch * channels * width * height *
-                                sizeof(data_t));
+  size_t words = batch * channels * width * height;
+  size_t bytes = words * sizeof(data_t);
+  tensor->address = loki_malloc(bytes);
   assert(tensor->address != NULL);
 
   tensor->rowSkip = sizeof(data_t);
@@ -195,6 +197,14 @@ activation_config_t* init_activation_tensor(uint batch, uint channels,
   return tensor;
 }
 
+// Set values in memory to 0. Useful for anything which accumulates results in
+// memory, e.g. convolutions. Not necessary for functions which write the result
+// directly, e.g. pooling.
+// Warning: overwrites output channel 2 (as allowed by the ABI).
+void clear_memory(data_t* address, size_t num_words, int memoryConfig) {
+  set_channel_map(2, memoryConfig);
+  loki_channel_memset_words(2, address, 0, num_words);
+}
 
 activation_config_t* lat_conv2d_alloc(
   const activation_config_t* input,
@@ -213,6 +223,9 @@ activation_config_t* lat_conv2d_alloc(
 
   // Default: use same memory group as `input`.
   output->memoryConfigEncoded = input->memoryConfigEncoded;
+
+  // Initialise tensor contents to zero.
+  clear_memory(output->address, batch*channels*height*width*sizeof(data_t)/4, output->memoryConfigEncoded);
 
   lat_conv2d(input, weights, output, params, stride, dilation);
 
@@ -233,6 +246,9 @@ activation_config_t* lat_linear_alloc(
 
   // Default: use same memory group as `input`.
   output->memoryConfigEncoded = input->memoryConfigEncoded;
+
+  // Initialise tensor contents to zero.
+  clear_memory(output->address, numOutputs*sizeof(data_t)/4, output->memoryConfigEncoded);
 
   lat_linear(input, weights, output, batchSize, numInputs, numOutputs);
 
