@@ -187,9 +187,9 @@ activation_config_t* init_activation_tensor(uint batch, uint channels,
                                 sizeof(data_t));
   assert(tensor->address != NULL);
 
-  tensor->columnSkip = sizeof(data_t);
-  tensor->rowSkip = width * tensor->columnSkip;
-  tensor->channelSkip = height * tensor->rowSkip;
+  tensor->rowSkip = sizeof(data_t);
+  tensor->columnSkip = width * tensor->rowSkip;
+  tensor->channelSkip = height * tensor->columnSkip;
   tensor->batchSkip = channels * tensor->channelSkip;
 
   return tensor;
