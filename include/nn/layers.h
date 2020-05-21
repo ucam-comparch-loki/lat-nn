@@ -1,19 +1,37 @@
-// TODO: Pull the neural-network specific stuff out of lat-ifc and into here.
-// TODO: create a tensor type which generalises all of the `config_t`s and
-//       exposes more information (e.g. size of each dimension).
-
 #ifndef LAT_NN_LAYERS_H
 #define LAT_NN_LAYERS_H
 
 #include <lat/types.h>
+#include "loops.h"
+#include "tensor.h"
+
+// Size and shape of convolution.
+typedef struct {
+  uint32_t batch_size;
+  uint32_t in_channels;
+  uint32_t out_channels;
+  uint32_t image_width;
+  uint32_t image_height;
+  uint32_t filter_width;
+  uint32_t filter_height;
+
+  // Channels (both in and out) partitioned into this many groups: default 1.
+  uint32_t groups;
+
+  // Step size (in pixels) between adjacent filter positions: default 1.
+  uint32_t stride;
+
+  // Distance between activation pixels multiplied by weights: default 1.
+  uint32_t dilation;
+} conv_shape_t;
 
 typedef struct {
-  uint32_t batchSize;
+  uint32_t batch_size;
   uint32_t channels;
-  uint32_t inputWidth;
-  uint32_t inputHeight;
-  uint32_t windowWidth;
-  uint32_t windowHeight;
+  uint32_t input_width;
+  uint32_t input_height;
+  uint32_t window_width;
+  uint32_t window_height;
   uint32_t stride;        // In pixels.
 } pool_shape_t;
 
@@ -23,8 +41,7 @@ void lat_conv2d(
   const filter_config_t* weights,
   activation_config_t* output,
   const conv_shape_t* params,
-  uint32_t stride,    // TODO: put this in conv_shape_t?
-  uint32_t dilation   // TODO: put this in conv_shape_t?
+  const loop_nest_t* loop_order
 );
 
 // Linear/fully-connected layer. Used for classification and multi-layer
@@ -35,9 +52,10 @@ void lat_linear(
   const activation_config_t* input,
   const filter_config_t* weights,
   activation_config_t* output,
-  uint32_t batchSize,
-  uint32_t numInputs,
-  uint32_t numOutputs
+  uint32_t batch_size,
+  uint32_t num_inputs,
+  uint32_t num_outputs,
+  const loop_nest_t* loop_order
 );
 
 // Downsample input by taking the maximum value in each window.
@@ -60,8 +78,7 @@ activation_config_t* lat_conv2d_alloc(
   const activation_config_t* input,
   const filter_config_t* weights,
   const conv_shape_t* params,
-  uint32_t stride,    // TODO: put this in conv_shape_t?
-  uint32_t dilation   // TODO: put this in conv_shape_t?
+  const loop_nest_t* loop_order
 );
 
 // Linear/fully-connected layer with automatic allocation of output buffer.
@@ -70,9 +87,10 @@ activation_config_t* lat_conv2d_alloc(
 activation_config_t* lat_linear_alloc(
   const activation_config_t* input,
   const filter_config_t* weights,
-  uint32_t batchSize,
-  uint32_t numInputs,
-  uint32_t numOutputs
+  uint32_t batch_size,
+  uint32_t num_inputs,
+  uint32_t num_outputs,
+  const loop_nest_t* loop_order
 );
 
 // Downsample input by taking the maximum value in each window.

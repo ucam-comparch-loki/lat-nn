@@ -7,25 +7,103 @@
 #include <loki/ids.h>
 #include "nn/layers.h"
 
+// Determine how large the output will be (in pixels), given the computation
+// parameters. This applies to any windowed computation, e.g. convolution,
+// pooling.
+// The equation is taken from PyTorch (minus the `padding` parameter):
+// https://pytorch.org/docs/stable/nn.html#conv2d
+uint output_size(uint input_size, uint window_size, uint stride, uint dilation) {
+  int size = ((input_size - dilation * (window_size - 1) - 1) / stride) + 1;
+  return (size < 0) ? 0 : size;
+}
+
 void lat_conv2d(
   const activation_config_t* input,
   const filter_config_t* weights,
   activation_config_t* output,
   const conv_shape_t* params,
-  uint32_t stride,
-  uint32_t dilation
+  const loop_nest_t* loop_order
 ) {
+
+  // TODO: provide a default loop order if none is provided.
+  assert(loop_order != NULL);
 
   lat_parameters_t p;
 
-  p.shape = *params;
-  p.stride = stride;
-  p.dilation = dilation;
-  p.input = *input;
-  p.output = *output;
-  p.filters = *weights;
-  uint32_t thisCore = single_core_bitmask(get_core_id());
-  p.notificationAddress = loki_mcast_address(thisCore, CH_REGISTER_3, 0);
+  uint32_t this_core = single_core_bitmask(get_core_id());
+  p.notification_address = loki_mcast_address(this_core, CH_REGISTER_3, 0);
+
+  p.loop_count = loop_order->loop_count;
+  p.loops = malloc(p.loop_count * sizeof(loop_iteration_t));
+  p.iteration_counts = malloc(p.loop_count * sizeof(uint32_t));
+  assert(p.loops != NULL);
+  assert(p.iteration_counts != NULL);
+
+  // Default: in1=input, in2=weights, out=output.
+  for (uint i=0; i<p.loop_count; i++) {
+    switch (loop_order->loops[i]) {
+      case BATCH:
+        p.loops[i].in1_stride = input->batch_stride;
+        p.loops[i].in2_stride = 0;
+        p.loops[i].out_stride = output->batch_stride;
+        p.iteration_counts[i] = params->batch_size;
+        break;
+
+      case IN_CHANNELS:
+        p.loops[i].in1_stride = input->channel_stride;
+        p.loops[i].in2_stride = weights->in_channel_stride;
+        p.loops[i].out_stride = 0;
+        p.iteration_counts[i] = params->in_channels;
+        break;
+
+      case OUT_CHANNELS:
+        p.loops[i].in1_stride = 0;
+        p.loops[i].in2_stride = weights->out_channel_stride;
+        p.loops[i].out_stride = output->channel_stride;
+        p.iteration_counts[i] = params->out_channels;
+        break;
+
+      case IMAGE_WIDTH:
+        p.loops[i].in1_stride = input->column_stride * params->stride;
+        p.loops[i].in2_stride = 0;
+        p.loops[i].out_stride = output->column_stride;
+        p.iteration_counts[i] = output_size(params->image_width,
+            params->filter_width, params->stride, params->dilation);
+        break;
+
+      case IMAGE_HEIGHT:
+        p.loops[i].in1_stride = input->row_stride * params->stride;
+        p.loops[i].in2_stride = 0;
+        p.loops[i].out_stride = output->row_stride;
+        p.iteration_counts[i] = output_size(params->image_height,
+            params->filter_height, params->stride, params->dilation);
+        break;
+
+      case FILTER_WIDTH:
+        p.loops[i].in1_stride = input->column_stride * params->dilation;
+        p.loops[i].in2_stride = weights->column_stride;
+        p.loops[i].out_stride = 0;
+        p.iteration_counts[i] = params->filter_width;
+        break;
+
+      case FILTER_HEIGHT:
+        p.loops[i].in1_stride = input->row_stride * params->dilation;
+        p.loops[i].in2_stride = weights->row_stride;
+        p.loops[i].out_stride = 0;
+        p.iteration_counts[i] = params->filter_height;
+        break;
+
+      default:
+        printf("Error: unsupported convolution Loop enum: %d\n",
+               loop_order->loops[i]);
+        exit(1);
+        break;
+    }
+  }
+
+  p.in1 = input->data;
+  p.in2 = weights->data;
+  p.out = output->data;
 
   lat_accelerate(&p);
   // Could do something else while waiting. (But need to put `p` on the heap.)
@@ -38,25 +116,28 @@ void lat_linear(
   const activation_config_t* input,
   const filter_config_t* weights,
   activation_config_t* output,
-  uint32_t batchSize,
-  uint32_t numInputs,
-  uint32_t numOutputs
+  uint32_t batch_size,
+  uint32_t num_inputs,
+  uint32_t num_outputs,
+  const loop_nest_t* loop_order
 ) {
   // TODO: the accelerator interface is currently limited to convolutions.
   // Simplify this when the interface is generalised.
 
   // Encode this layer as a convolution.
   conv_shape_t conv;
-  conv.batchSize = batchSize;
-  conv.inChannels = numInputs;
-  conv.outChannels = numOutputs;
-  conv.imageWidth = 1;
-  conv.imageHeight = 1;
-  conv.filterWidth = 1;
-  conv.filterHeight = 1;
+  conv.batch_size = batch_size;
+  conv.in_channels = num_inputs;
+  conv.out_channels = num_outputs;
+  conv.image_width = 1;
+  conv.image_height = 1;
+  conv.filter_width = 1;
+  conv.filter_height = 1;
   conv.groups = 1;
+  conv.stride = 1;
+  conv.dilation = 1;
 
-  lat_conv2d(input, weights, output, &conv, 1, 0);
+  lat_conv2d(input, weights, output, &conv, loop_order);
 }
 
 
@@ -107,24 +188,25 @@ void lat_max_pool_2d(
 
   // This is the furthest we can iterate through the input, while still having
   // space for a full window.
-  uint maxHeight = params->inputHeight - params->windowHeight + 1;
-  uint maxWidth = params->inputWidth - params->windowWidth + 1;
+  // TODO: dilation
+  uint max_height = params->input_height - params->window_height + 1;
+  uint max_width = params->input_width - params->window_width + 1;
 
-  for (uint b=0; b<params->batchSize; b++) {
+  for (uint b=0; b<params->batch_size; b++) {
     for (uint ch=0; ch<params->channels; ch++) {
-      for (uint row=0; row<maxHeight; row+=params->stride) {
-        for (uint col=0; col<maxWidth; col+=params->stride) {
-          data_t* in_ptr = input->address + b*input->batchSkip +
-                           ch*input->channelSkip + row*input->rowSkip +
-                           col*input->columnSkip;
-          data_t* out_ptr = output->address + b*output->batchSkip +
-                            ch*output->channelSkip + row*output->rowSkip +
-                            col*output->columnSkip;
+      for (uint row=0; row<max_height; row+=params->stride) {
+        for (uint col=0; col<max_width; col+=params->stride) {
+          data_t* in_ptr = input->data.address + b*input->batch_stride +
+                           ch*input->channel_stride + row*input->row_stride +
+                           col*input->column_stride;
+          data_t* out_ptr = output->data.address + b*output->batch_stride +
+                            ch*output->channel_stride + row*output->row_stride +
+                            col*output->column_stride;
 
-          *out_ptr = window_max(in_ptr, params->windowWidth,
-                                input->columnSkip / sizeof(data_t),
-                                params->windowHeight,
-                                input->rowSkip / sizeof(data_t));
+          *out_ptr = window_max(in_ptr, params->window_width,
+                                input->column_stride / sizeof(data_t),
+                                params->window_height,
+                                input->row_stride / sizeof(data_t));
         }
       }
     }
@@ -141,39 +223,31 @@ void lat_avg_pool_2d(
 
   // This is the furthest we can iterate through the input, while still having
   // space for a full window.
-  uint maxHeight = params->inputHeight - params->windowHeight + 1;
-  uint maxWidth = params->inputWidth - params->windowWidth + 1;
+  // TODO: dilation.
+  uint max_height = params->input_height - params->window_height + 1;
+  uint max_width = params->input_width - params->window_width + 1;
 
-  for (uint b=0; b<params->batchSize; b++) {
+  for (uint b=0; b<params->batch_size; b++) {
     for (uint ch=0; ch<params->channels; ch++) {
-      for (uint row=0; row<maxHeight; row+=params->stride) {
-        for (uint col=0; col<maxWidth; col+=params->stride) {
-          data_t* in_ptr = input->address + b*input->batchSkip +
-                           ch*input->channelSkip + row*input->rowSkip +
-                           col*input->columnSkip;
-          data_t* out_ptr = output->address + b*output->batchSkip +
-                            ch*output->channelSkip + row*output->rowSkip +
-                            col*output->columnSkip;
+      for (uint row=0; row<max_height; row+=params->stride) {
+        for (uint col=0; col<max_width; col+=params->stride) {
+          data_t* in_ptr = input->data.address + b*input->batch_stride +
+                           ch*input->channel_stride + row*input->row_stride +
+                           col*input->column_stride;
+          data_t* out_ptr = output->data.address + b*output->batch_stride +
+                            ch*output->channel_stride + row*output->row_stride +
+                            col*output->column_stride;
 
-          *out_ptr = window_avg(in_ptr, params->windowWidth,
-                                input->columnSkip / sizeof(data_t),
-                                params->windowHeight,
-                                input->rowSkip / sizeof(data_t));
+          *out_ptr = window_avg(in_ptr, params->window_width,
+                                input->column_stride / sizeof(data_t),
+                                params->window_height,
+                                input->row_stride / sizeof(data_t));
         }
       }
     }
   }
 }
 
-
-// Determine how large the output will be (in pixels), given the computation
-// parameters. This applies to any windowed computation, e.g. convolution,
-// pooling.
-// The equation is taken from PyTorch (minus the `padding` parameter):
-// https://pytorch.org/docs/stable/nn.html#conv2d
-uint output_size(uint input_size, uint window_size, uint stride, uint dilation) {
-  return ((input_size - dilation * (window_size - 1) - 1) / stride) + 1;
-}
 
 // Allocate and initialise an activation tensor with the given dimensions.
 // The default dimension order is [batch, channels, height, width].
@@ -186,13 +260,13 @@ activation_config_t* init_activation_tensor(uint batch, uint channels,
 
   size_t words = batch * channels * width * height;
   size_t bytes = words * sizeof(data_t);
-  tensor->address = loki_malloc(bytes);
-  assert(tensor->address != NULL);
+  tensor->data.address = loki_malloc(bytes);
+  assert(tensor->data.address != NULL);
 
-  tensor->rowSkip = sizeof(data_t);
-  tensor->columnSkip = width * tensor->rowSkip;
-  tensor->channelSkip = height * tensor->columnSkip;
-  tensor->batchSkip = channels * tensor->channelSkip;
+  tensor->row_stride = sizeof(data_t);
+  tensor->column_stride = width * tensor->row_stride;
+  tensor->channel_stride = height * tensor->column_stride;
+  tensor->batch_stride = channels * tensor->channel_stride;
 
   return tensor;
 }
@@ -201,8 +275,8 @@ activation_config_t* init_activation_tensor(uint batch, uint channels,
 // memory, e.g. convolutions. Not necessary for functions which write the result
 // directly, e.g. pooling.
 // Warning: overwrites output channel 2 (as allowed by the ABI).
-void clear_memory(data_t* address, size_t num_words, int memoryConfig) {
-  set_channel_map(2, memoryConfig);
+void clear_memory(data_t* address, size_t num_words, int memory_config) {
+  set_channel_map(2, memory_config);
   loki_channel_memset_words(2, address, 0, num_words);
 }
 
@@ -210,24 +284,23 @@ activation_config_t* lat_conv2d_alloc(
   const activation_config_t* input,
   const filter_config_t* weights,
   const conv_shape_t* params,
-  uint32_t stride,
-  uint32_t dilation
+  const loop_nest_t* loop_order
 ) {
-  uint batch = params->batchSize;
-  uint channels = params->outChannels;
-  uint height = output_size(params->imageHeight, params->filterHeight, stride, dilation);
-  uint width = output_size(params->imageWidth, params->filterWidth, stride, dilation);
+  uint batch = params->batch_size;
+  uint channels = params->out_channels;
+  uint height = output_size(params->image_height, params->filter_height, params->stride, params->dilation);
+  uint width = output_size(params->image_width, params->filter_width, params->stride, params->dilation);
 
   activation_config_t* output =
       init_activation_tensor(batch, channels, height, width);
 
   // Default: use same memory group as `input`.
-  output->memoryConfigEncoded = input->memoryConfigEncoded;
+  output->data.memory_config = input->data.memory_config;
 
   // Initialise tensor contents to zero.
-  clear_memory(output->address, batch*channels*height*width*sizeof(data_t)/4, output->memoryConfigEncoded);
+  clear_memory(output->data.address, batch*channels*height*width*sizeof(data_t)/4, output->data.memory_config);
 
-  lat_conv2d(input, weights, output, params, stride, dilation);
+  lat_conv2d(input, weights, output, params, loop_order);
 
   return output;
 }
@@ -235,22 +308,23 @@ activation_config_t* lat_conv2d_alloc(
 activation_config_t* lat_linear_alloc(
   const activation_config_t* input,
   const filter_config_t* weights,
-  uint32_t batchSize,
-  uint32_t numInputs,
-  uint32_t numOutputs
+  uint32_t batch_size,
+  uint32_t num_inputs,
+  uint32_t num_outputs,
+  const loop_nest_t* loop_order
 ) {
   // Add dummy dimensions so this tensor can be passed to the convolution
   // function.
   activation_config_t* output =
-      init_activation_tensor(batchSize, numOutputs, 1, 1);
+      init_activation_tensor(batch_size, num_outputs, 1, 1);
 
   // Default: use same memory group as `input`.
-  output->memoryConfigEncoded = input->memoryConfigEncoded;
+  output->data.memory_config = input->data.memory_config;
 
   // Initialise tensor contents to zero.
-  clear_memory(output->address, numOutputs*sizeof(data_t)/4, output->memoryConfigEncoded);
+  clear_memory(output->data.address, num_outputs*sizeof(data_t)/4, output->data.memory_config);
 
-  lat_linear(input, weights, output, batchSize, numInputs, numOutputs);
+  lat_linear(input, weights, output, batch_size, num_inputs, num_outputs, loop_order);
 
   return output;
 }
@@ -259,16 +333,16 @@ activation_config_t* lat_max_pool_2d_alloc(
   const activation_config_t* input,
   const pool_shape_t* params
 ) {
-  uint batch = params->batchSize;
+  uint batch = params->batch_size;
   uint channels = params->channels;
-  uint height = output_size(params->inputHeight, params->windowHeight, params->stride, 1);
-  uint width = output_size(params->inputWidth, params->windowWidth, params->stride, 1);
+  uint height = output_size(params->input_height, params->window_height, params->stride, 1);
+  uint width = output_size(params->input_width, params->window_width, params->stride, 1);
 
   activation_config_t* output =
       init_activation_tensor(batch, channels, height, width);
 
   // Default: use same memory group as `input`.
-  output->memoryConfigEncoded = input->memoryConfigEncoded;
+  output->data.memory_config = input->data.memory_config;
 
   lat_max_pool_2d(input, output, params);
 
@@ -279,16 +353,16 @@ activation_config_t* lat_avg_pool_2d_alloc(
   const activation_config_t* input,
   const pool_shape_t* params
 ) {
-  uint batch = params->batchSize;
+  uint batch = params->batch_size;
   uint channels = params->channels;
-  uint height = output_size(params->inputHeight, params->windowHeight, params->stride, 1);
-  uint width = output_size(params->inputWidth, params->windowWidth, params->stride, 1);
+  uint height = output_size(params->input_height, params->window_height, params->stride, 1);
+  uint width = output_size(params->input_width, params->window_width, params->stride, 1);
 
   activation_config_t* output =
       init_activation_tensor(batch, channels, height, width);
 
   // Default: use same memory group as `input`.
-  output->memoryConfigEncoded = input->memoryConfigEncoded;
+  output->data.memory_config = input->data.memory_config;
 
   lat_avg_pool_2d(input, output, params);
 
