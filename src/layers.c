@@ -28,16 +28,20 @@ void lat_conv2d(
   // TODO: provide a default loop order if none is provided.
   assert(loop_order != NULL);
 
+  // Memory allocation is not multi-tile safe, so use statically allocated
+  // arrays.
+  assert(loop_order->loop_count <= 10);
+  loop_iteration_t loops[10];
+  uint32_t iteration_counts[10];
+
   lat_parameters_t p;
 
   uint32_t this_core = single_core_bitmask(get_core_id());
   p.notification_address = loki_mcast_address(this_core, CH_REGISTER_3, 0);
 
   p.loop_count = loop_order->loop_count;
-  p.loops = malloc(p.loop_count * sizeof(loop_iteration_t));
-  p.iteration_counts = malloc(p.loop_count * sizeof(uint32_t));
-  assert(p.loops != NULL);
-  assert(p.iteration_counts != NULL);
+  p.loops = loops;
+  p.iteration_counts = iteration_counts;
 
   // Default: in1=input, in2=weights, out=output.
   for (uint i=0; i<p.loop_count; i++) {
