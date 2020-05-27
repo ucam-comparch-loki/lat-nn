@@ -200,12 +200,12 @@ void lat_max_pool_2d(
     for (uint ch=0; ch<params->channels; ch++) {
       for (uint row=0; row<max_height; row+=params->stride) {
         for (uint col=0; col<max_width; col+=params->stride) {
-          data_t* in_ptr = input->data.address + b*input->batch_stride +
+          data_t* in_ptr = input->data.address + (b*input->batch_stride +
                            ch*input->channel_stride + row*input->row_stride +
-                           col*input->column_stride;
-          data_t* out_ptr = output->data.address + b*output->batch_stride +
+                           col*input->column_stride) / sizeof(data_t);
+          data_t* out_ptr = output->data.address + (b*output->batch_stride +
                             ch*output->channel_stride + row*output->row_stride +
-                            col*output->column_stride;
+                            col*output->column_stride) / sizeof(data_t);
 
           *out_ptr = window_max(in_ptr, params->window_width,
                                 input->column_stride / sizeof(data_t),
@@ -235,12 +235,12 @@ void lat_avg_pool_2d(
     for (uint ch=0; ch<params->channels; ch++) {
       for (uint row=0; row<max_height; row+=params->stride) {
         for (uint col=0; col<max_width; col+=params->stride) {
-          data_t* in_ptr = input->data.address + b*input->batch_stride +
+          data_t* in_ptr = input->data.address + (b*input->batch_stride +
                            ch*input->channel_stride + row*input->row_stride +
-                           col*input->column_stride;
-          data_t* out_ptr = output->data.address + b*output->batch_stride +
+                           col*input->column_stride) / sizeof(data_t);
+          data_t* out_ptr = output->data.address + (b*output->batch_stride +
                             ch*output->channel_stride + row*output->row_stride +
-                            col*output->column_stride;
+                            col*output->column_stride) / sizeof(data_t);
 
           *out_ptr = window_avg(in_ptr, params->window_width,
                                 input->column_stride / sizeof(data_t),
