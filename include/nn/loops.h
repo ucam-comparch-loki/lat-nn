@@ -9,8 +9,10 @@ enum Loop {
   OUT_CHANNELS,
   IMAGE_WIDTH,
   IMAGE_HEIGHT,
-  FILTER_WIDTH,
-  FILTER_HEIGHT
+  FILTER_WIDTH_OS,  // output stationary
+  FILTER_HEIGHT_OS, // output stationary
+  FILTER_WIDTH_IS,  // input stationary
+  FILTER_HEIGHT_IS  // input stationary
 };
 
 // A collection of loops, from outermost to innermost.

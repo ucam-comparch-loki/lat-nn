@@ -83,17 +83,31 @@ void lat_conv2d(
             params->filter_height, params->stride, params->dilation);
         break;
 
-      case FILTER_WIDTH:
+      case FILTER_WIDTH_OS:
         p.loops[i].in1_stride = input->column_stride * params->dilation;
         p.loops[i].in2_stride = weights->column_stride;
         p.loops[i].out_stride = 0;
         p.iteration_counts[i] = params->filter_width;
         break;
 
-      case FILTER_HEIGHT:
+      case FILTER_HEIGHT_OS:
         p.loops[i].in1_stride = input->row_stride * params->dilation;
         p.loops[i].in2_stride = weights->row_stride;
         p.loops[i].out_stride = 0;
+        p.iteration_counts[i] = params->filter_height;
+        break;
+
+      case FILTER_WIDTH_IS:
+        p.loops[i].in1_stride = 0;
+        p.loops[i].in2_stride = weights->column_stride;
+        p.loops[i].out_stride = -output->column_stride * params->dilation;
+        p.iteration_counts[i] = params->filter_width;
+        break;
+
+      case FILTER_HEIGHT_IS:
+        p.loops[i].in1_stride = 0;
+        p.loops[i].in2_stride = weights->row_stride;
+        p.loops[i].out_stride = -output->row_stride * params->dilation;
         p.iteration_counts[i] = params->filter_height;
         break;
 
