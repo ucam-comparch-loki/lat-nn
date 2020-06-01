@@ -32,9 +32,19 @@ typedef struct {
 
 
 // Some sensible defaults.
+
+// The way we'd probably write a convolution in code.
+// Innermost loops are very short, so parallelism isn't great.
 extern loop_nest_t LOOP_NEST_NAIVE;
+
+// Output remains constant in both inner loops. Can accumulate in both
+// accelerator dimensions.
 extern loop_nest_t LOOP_NEST_OUTPUT_STATIONARY;
+
+// Input remains constant in penultimate loop. Can broadcast along rows.
 extern loop_nest_t LOOP_NEST_INPUT_STATIONARY;
+
+// Weights remain constant in inner loops. Can broadcast along columns.
 extern loop_nest_t LOOP_NEST_WEIGHT_STATIONARY;
 
 #endif // include guard

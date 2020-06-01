@@ -12,7 +12,6 @@ enum Loop LOOPS_OUTPUT_STATIONARY[7] = {BATCH, OUT_CHANNELS, IMAGE_HEIGHT,
 
 // Input remains constant in penultimate loop. Can broadcast along rows.
 // (Columns too, but input isn't constant there.)
-// TODO: provide alternate FILTER loops which iterate over output, not input.
 enum Loop LOOPS_INPUT_STATIONARY[7] = {BATCH, IN_CHANNELS, IMAGE_HEIGHT,
     IMAGE_WIDTH, FILTER_HEIGHT_IS, OUT_CHANNELS, FILTER_WIDTH_IS};
 
